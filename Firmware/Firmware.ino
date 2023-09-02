@@ -88,7 +88,6 @@ void setup() {
 
   ///////////////////////PID///////////////////////////
   Setpoint = 150;  // Your desired temperature
-  myPID.SetMode(AUTOMATIC);
   aTune.SetOutputStep(50);
   aTune.SetControlType(1);
   aTune.SetNoiseBand(1);
@@ -177,6 +176,9 @@ void loop() {
         
         // Update PID parameters
         myPID.SetTunings(aTune.GetKp(), aTune.GetKi(), aTune.GetKd());
+
+        // SET Off PID
+        myPID.SetMode(MANUAL);
       }
     } else {
       myPID.Compute();
@@ -199,8 +201,9 @@ void loop() {
       // Add a new mode for autotuning in your menu logic
       if(selected_mode == 2) {  // Assuming mode 1 is for reflow and mode 2 is for autotuning
         if (!tuning) {
-          tuning = true;
-          // No need to explicitly start the autotuning mode
+            myPID.SetMode(MANUAL);  // Set PID to MANUAL
+            tuning = true;
+            // No need to explicitly start the autotuning mode
         }
       }
        
@@ -254,7 +257,8 @@ void loop() {
 
     //Mode 0 is with SSR OFF (we can selcet mode with buttons)
     if(running_mode == 0){ 
-      digitalWrite(SSR, HIGH);        //With HIGH the SSR is OFF
+        digitalWrite(SSR, HIGH);  // With HIGH the SSR is OFF
+        myPID.SetMode(MANUAL);  // Deactivate PID here
       lcd.clear();
       lcd.setCursor(0,0);     
       lcd.print("T: ");
@@ -346,6 +350,7 @@ void loop() {
     }
     else if(selected_mode == 1){
       running_mode = 1;
+      myPID.SetMode(AUTOMATIC);
       tone(buzzer, 2000, 150);
       delay(130);
       tone(buzzer, 2200, 150);
