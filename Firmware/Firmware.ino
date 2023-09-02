@@ -54,11 +54,16 @@ float PID_ERROR, PREV_ERROR;
 
 /////////////////////////////////////////////////////////
 // Constants for the new temperature reading method
+#define HISTORY_SIZE 5
 #define RT0 100000   // Ω
 #define B 3950       // K
 #define VCC 5        // Supply voltage
 #define R 100000     // R=100KΩ
 float T0 = 25 + 273.15;
+float historyA0[HISTORY_SIZE];
+float historyA1[HISTORY_SIZE];
+int historyIndex = 0;
+bool firstRun = true;
 /////////////////////////////////////////////////////////
 
 void setup() {
@@ -95,14 +100,57 @@ void setup() {
 
 // Function to read temperature using the new method
 float readTemperature() {
-  float VRT = analogRead(A0);              
-  VRT  = (5.00 / 1023.00) * VRT;      
+  // Read from both sensors
+  float newTempA0 = readRawTemperature(A0);
+  float newTempA1 = readRawTemperature(A1);
+
+  // Initialize history with first reading
+  if (firstRun) {
+    for (int i = 0; i < HISTORY_SIZE; i++) {
+      historyA0[i] = newTempA0;
+      historyA1[i] = newTempA1;
+    }
+    firstRun = false;
+  }
+
+  // Check if the new readings are outliers
+  float avgA0 = average(historyA0, HISTORY_SIZE);
+  float avgA1 = average(historyA1, HISTORY_SIZE);
+
+  if (abs(newTempA0 - avgA0) < 2.0 && abs(newTempA0 - newTempA1) < 2.0) {
+    historyA0[historyIndex] = newTempA0;
+  }
+  
+  if (abs(newTempA1 - avgA1) < 2.0 && abs(newTempA1 - newTempA0) < 2.0) {
+    historyA1[historyIndex] = newTempA1;
+  }
+
+  // Update history index
+  historyIndex = (historyIndex + 1) % HISTORY_SIZE;
+
+  // Compute the final temperature
+  float finalTemp = (average(historyA0, HISTORY_SIZE) + average(historyA1, HISTORY_SIZE)) / 2.0;
+
+  return finalTemp;
+}
+
+float readRawTemperature(int pin) {
+  float VRT = analogRead(pin);              
+  VRT  = (VCC / 1023.00) * VRT;      
   float VR = VCC - VRT;
   float RT = VRT / (VR / R);               
   float ln = log(RT / RT0);
   float TX = (1 / ((ln / B) + (1 / T0))); 
   TX =  TX - 273.15;                 
   return TX;
+}
+
+float average(float arr[], int size) {
+  float sum = 0.0;
+  for (int i = 0; i < size; i++) {
+    sum += arr[i];
+  }
+  return sum / size;
 }
 
 void loop() {
