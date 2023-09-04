@@ -47,10 +47,6 @@ int max_modes = 2;  // For now, we only work with 1 mode...
 bool but_3_state = true;  // Store the state of the button (HIGH OR LOW)
 bool but_4_state = true;  // Store the state of the button (HIGH OR LOW)
 float temperature = 0;  // Store the temperature value here
-float preheat_setpoint = 140;  // Mode 1 preheat ramp value is 140-150ºC
-float soak_setpoint = 150;  // Mode 1 soak is 150ºC for a few seconds
-float reflow_setpoint = 200;  // Mode 1 reflow peak is 200ºC
-float temp_setpoint = 0;  // Used for PID control
 float pwm_value = 255;  // The SSR is OFF with HIGH, so 255 PWM would turn OFF the SSR
 float MIN_PID_VALUE = 0;
 float cooldown_temp = 40;  // When is ok to touch the plate
@@ -75,6 +71,12 @@ float Kp = 2;        // Proportional gain. Adjust based on your system's respons
 float Ki = 0.0025;   // Integral gain. Adjust based on your system's response.
 float Kd = 9;        // Derivative gain. Adjust based on your system's response.
 float MAX_PID_VALUE = 180;  // Max PID output value. Adjust based on your system's capabilities.
+
+// Reflow Settings
+float preheat_setpoint = 140;  // Mode 1 preheat ramp value is 140-150ºC
+float soak_setpoint = 150;  // Mode 1 soak is 150ºC for a few seconds
+float reflow_setpoint = 130;  // Mode 1 reflow peak is 130ºC
+float temp_setpoint = 0;  // Used for PID control
 
 void setup() {
   Serial.begin(9600);  // Initialize serial communication at 9600 baud
@@ -122,16 +124,19 @@ float readTemperature() {
     firstRun = false;
   }
 
-  // Check if the new readings are outliers
+  // Calculate average and standard deviation
   float avgA0 = average(historyA0, HISTORY_SIZE);
   float avgA1 = average(historyA1, HISTORY_SIZE);
+  float stdDevA0 = standardDeviation(historyA0, HISTORY_SIZE, avgA0);
+  float stdDevA1 = standardDeviation(historyA1, HISTORY_SIZE, avgA1);
 
-  if (abs(newTempA0 - avgA0) < 2.0 && abs(newTempA0 - newTempA1) < 2.0) {
-    historyA0[historyIndex] = newTempA0;
-  }
-  
-  if (abs(newTempA1 - avgA1) < 2.0 && abs(newTempA1 - newTempA0) < 2.0) {
-    historyA1[historyIndex] = newTempA1;
+  // Update history arrays
+  historyA0[historyIndex] = newTempA0;
+  historyA1[historyIndex] = newTempA1;
+
+  // Check for rapid changes and take appropriate action
+  if (abs(newTempA0 - avgA0) > (2.0 * stdDevA0) || abs(newTempA1 - avgA1) > (2.0 * stdDevA1)) {
+    // Rapid change detected, take appropriate action (e.g., log a warning, trigger an alert, etc.)
   }
 
   // Update history index
@@ -162,6 +167,14 @@ float average(float arr[], int size) {
   return sum / size;
 }
 
+float standardDeviation(float arr[], int size, float mean) {
+  float sum = 0.0;
+  for (int i = 0; i < size; i++) {
+    sum += pow(arr[i] - mean, 2);
+  }
+  return sqrt(sum / size);
+}
+
 void loop() {
   millis_now = millis();
   if(millis_now - millis_before_2 > pid_refresh_rate){    //Refresh rate of the PID
@@ -171,7 +184,7 @@ void loop() {
 
     if (tuning) {
       int val = aTune.Runtime();
-      Serial.println(Input);  // Send the current temperature to the Serial Plotter
+      Serial.println(Temperature);  // Send the current temperature to the Serial Plotter
       
       if (val != 0) {
         tuning = false;
