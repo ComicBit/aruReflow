@@ -50,6 +50,7 @@ float temperature = 0;  // Store the temperature value here
 float pwm_value = 255;  // The SSR is OFF with HIGH, so 255 PWM would turn OFF the SSR
 float MIN_PID_VALUE = 0;
 float cooldown_temp = 40;  // When is ok to touch the plate
+unsigned long lastPrintTime = 0; 
 
 // Temperature Reading Method Variables
 float T0 = 25 + 273.15;
@@ -181,11 +182,24 @@ void loop() {
     millis_before_2 = millis(); 
     
     temperature = readTemperature();
+    Input = temperature;  // Update Input with the current temperature
 
     if (tuning) {
       int val = aTune.Runtime();
-      Serial.println(Temperature);  // Send the current temperature to the Serial Plotter
-      
+      Serial.println(Input);  // Send the current temperature to the Serial Plotter
+
+      if (millis() - lastPrintTime >= 5000) {  // Check if 5 seconds have passed
+        // Print the intermediate values of Kp, Ki, and Kd
+        Serial.print("Current Kp: ");
+        Serial.print(aTune.GetKp());
+        Serial.print(" Ki: ");
+        Serial.print(aTune.GetKi());
+        Serial.print(" Kd: ");
+        Serial.println(aTune.GetKd());
+
+        lastPrintTime = millis();  // Update the last print time
+      }
+
       if (val != 0) {
         tuning = false;
         
@@ -211,7 +225,7 @@ void loop() {
         cycleCounter++;
         
         if (cycleCounter >= desiredCycles) {
-          // Exit the loop or change mode of operation
+          running_mode = 0;
         }
       }
     }
