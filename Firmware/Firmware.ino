@@ -1,70 +1,80 @@
-#include <Wire.h>                   //Included by Arduino IDE
-#include <LiquidCrystal_I2C.h>      //Downlaod it here: http://electronoobs.com/eng_arduino_liq_crystal.php
-LiquidCrystal_I2C lcd(0x27,16,2);   //Define LCD address as 0x27. Also try 0x3f if it doesn't work. 
-
+#include <Wire.h>  // Included by Arduino IDE
+#include <LiquidCrystal_I2C.h>  // Download it here: http://electronoobs.com/eng_arduino_liq_crystal.php
 #include <PID_v1.h>
 #include <PID_AutoTune_v0.h>
 
-double Setpoint, Input, Output;
-PID myPID(&Input, &Output, &Setpoint, 0, 0, 0, DIRECT);
-PID_ATune aTune(&Input, &Output);
-
-bool tuning = false;
-
-//Inputs and Outputs
-int but_1 = 12;
-int but_2 = 11;
-int but_3 = 10; 
-int but_4 = 9;
-int SSR = 3;
-int buzzer = 6;
-int Thermistor_PIN = A0;
-
-//Variables
-unsigned int millis_before, millis_before_2;    //We use these to create the loop refresh rate
-unsigned int millis_now = 0;
-float refresh_rate = 500;                       //LCD refresh rate. You can change this if you want
-float pid_refresh_rate  = 50;                   //PID Refresh rate
-float seconds = 0;                              //Variable used to store the elapsed time                   
-int running_mode = 0;                           //We store the running selected mode here
-int selected_mode = 0;                          //Selected mode for the menu
-int max_modes = 2;                              //For now, we only work with 1 mode...
-bool but_3_state = true;                        //Store the state of the button (HIGH OR LOW)
-bool but_4_state  =true;                        //Store the state of the button (HIGH OR LOW)
-float temperature = 0;                          //Store the temperature value here
-float preheat_setoint = 140;                    //Mode 1 preheat ramp value is 140-150ºC
-float soak_setoint = 150;                       //Mode 1 soak is 150ºC for a few seconds
-float reflow_setpoint = 200;                    //Mode 1 reflow peak is 200ºC
-float temp_setpoint = 0;                        //Used for PID control
-float pwm_value = 255;                          //The SSR is OFF with HIGH, so 255 PWM would turn OFF the SSR
-float MIN_PID_VALUE = 0;
-float MAX_PID_VALUE = 180;                      //Max PID value. You can change this. 
-float cooldown_temp = 40;                       //When is ok to touch the plate
-bool idleState = true;
-
-/////////////////////PID VARIABLES///////////////////////
-/////////////////////////////////////////////////////////
-float Kp = 2;               //Mine was 2
-float Ki = 0.0025;          //Mine was 0.0025
-float Kd = 9;               //Mine was 9
-float PID_Output = 0;
-float PID_P, PID_I, PID_D;
-float PID_ERROR, PREV_ERROR;
-/////////////////////////////////////////////////////////
-
-/////////////////////////////////////////////////////////
 // Constants for the new temperature reading method
 #define HISTORY_SIZE 5
 #define RT0 100000   // Ω
 #define B 3950       // K
 #define VCC 5        // Supply voltage
 #define R 100000     // R=100KΩ
+
+// LCD Initialization
+LiquidCrystal_I2C lcd(0x27, 16, 2);  // Define LCD address as 0x27. Also try 0x3f if it doesn't work.
+
+// PID Initialization
+double Setpoint, Input, Output;
+PID myPID(&Input, &Output, &Setpoint, 0, 0, 0, DIRECT);
+PID_ATune aTune(&Input, &Output);
+bool tuning = false;
+
+// PID Variables
+float PID_Output = 0;
+float PID_P, PID_I, PID_D;
+float PID_ERROR, PREV_ERROR;
+int setTemperature = 150;
+int desiredCycles = 5;
+int cycleCounter = 0; 
+
+// Inputs and Outputs
+int but_1 = 12;
+int but_2 = 11;
+int but_3 = 10; 
+int but_4 = 9;
+int SSR = 3;
+int buzzer = 6;
+int Thermistor1_PIN = A0;
+int Thermistor2_PIN = A1;  // Changed from A0 to A1
+
+// Variables
+unsigned int millis_before, millis_before_2;  // We use these to create the loop refresh rate
+unsigned int millis_now = 0;
+float seconds = 0;  // Variable used to store the elapsed time
+int running_mode = 0;  // We store the running selected mode here
+int selected_mode = 0;  // Selected mode for the menu
+int max_modes = 2;  // For now, we only work with 1 mode...
+bool but_3_state = true;  // Store the state of the button (HIGH OR LOW)
+bool but_4_state = true;  // Store the state of the button (HIGH OR LOW)
+float temperature = 0;  // Store the temperature value here
+float preheat_setpoint = 140;  // Mode 1 preheat ramp value is 140-150ºC
+float soak_setpoint = 150;  // Mode 1 soak is 150ºC for a few seconds
+float reflow_setpoint = 200;  // Mode 1 reflow peak is 200ºC
+float temp_setpoint = 0;  // Used for PID control
+float pwm_value = 255;  // The SSR is OFF with HIGH, so 255 PWM would turn OFF the SSR
+float MIN_PID_VALUE = 0;
+float cooldown_temp = 40;  // When is ok to touch the plate
+
+// Temperature Reading Method Variables
 float T0 = 25 + 273.15;
 float historyA0[HISTORY_SIZE];
 float historyA1[HISTORY_SIZE];
 int historyIndex = 0;
 bool firstRun = true;
-/////////////////////////////////////////////////////////
+bool idleState = true;
+
+// ================== USER CONFIGURABLE SETTINGS ==================
+// Screen Refresh Settings
+float refresh_rate = 500;  // LCD refresh rate in milliseconds. Adjust as necessary.
+
+// Temperature Reading Interval
+float pid_refresh_rate = 50;  // PID Refresh rate in milliseconds. Adjust as necessary.
+
+// PID Settings
+float Kp = 2;        // Proportional gain. Adjust based on your system's response.
+float Ki = 0.0025;   // Integral gain. Adjust based on your system's response.
+float Kd = 9;        // Derivative gain. Adjust based on your system's response.
+float MAX_PID_VALUE = 180;  // Max PID output value. Adjust based on your system's capabilities.
 
 void setup() {
   Serial.begin(9600);  // Initialize serial communication at 9600 baud
@@ -77,7 +87,8 @@ void setup() {
   pinMode(but_2, INPUT_PULLUP);
   pinMode(but_3, INPUT_PULLUP);
   pinMode(but_4, INPUT_PULLUP);
-  pinMode(Thermistor_PIN, INPUT);
+  pinMode(Thermistor1_PIN, INPUT);
+  pinMode(Thermistor2_PIN, INPUT);
 
   lcd.init();
   lcd.backlight();
@@ -93,15 +104,14 @@ void setup() {
   aTune.SetNoiseBand(1);
   aTune.SetLookbackSec(30);
   digitalWrite(SSR, HIGH);  // Make sure SSR is OFF
-  idleState = true;  // Initialize to idle state
   /////////////////////////////////////////////////////////
 }
 
 // Function to read temperature using the new method
 float readTemperature() {
   // Read from both sensors
-  float newTempA0 = readRawTemperature(A0);
-  float newTempA1 = readRawTemperature(A1);
+  float newTempA0 = readRawTemperature(Thermistor1_PIN);
+  float newTempA1 = readRawTemperature(Thermistor2_PIN);
 
   // Initialize history with first reading
   if (firstRun) {
@@ -180,31 +190,30 @@ void loop() {
         // SET Off PID
         myPID.SetMode(MANUAL);
       }
-    } else {
+    } else if (!idleState) {
       myPID.Compute();
       analogWrite(SSR, Output);
+
+      if (temperature >= setTemperature) {
+        cycleCounter++;
+        
+        if (cycleCounter >= desiredCycles) {
+          // Exit the loop or change mode of operation
+        }
+      }
     }
     
     if(running_mode == 1){   
-      if(temperature < preheat_setoint){
+      if(temperature < preheat_setpoint){
         temp_setpoint = seconds*1.666;                    //Reach 150ºC till 90s (150/90=1.666)
       }  
         
-      if(temperature > preheat_setoint && seconds < 90){
-        temp_setpoint = soak_setoint;               
+      if(temperature > preheat_setpoint && seconds < 90){
+        temp_setpoint = soak_setpoint;               
       }   
         
       else if(seconds > 90 && seconds < 110){
         temp_setpoint = reflow_setpoint;                 
-      }
-
-      // Add a new mode for autotuning in your menu logic
-      if(selected_mode == 2) {  // Assuming mode 1 is for reflow and mode 2 is for autotuning
-        if (!tuning) {
-            myPID.SetMode(MANUAL);  // Set PID to MANUAL
-            tuning = true;
-            // No need to explicitly start the autotuning mode
-        }
       }
        
       //Calculate PID
@@ -259,26 +268,24 @@ void loop() {
     if(running_mode == 0){ 
         digitalWrite(SSR, HIGH);  // With HIGH the SSR is OFF
         myPID.SetMode(MANUAL);  // Deactivate PID here
-      lcd.clear();
-      lcd.setCursor(0,0);     
-      lcd.print("T: ");
-      lcd.print(temperature,1);   
-      lcd.setCursor(9,0);      
-      lcd.print("SSR OFF"); 
-       
-      lcd.setCursor(0,1);
-      if(selected_mode == 0){
-        lcd.print("Select Mode");     
-      }
-      else if(selected_mode == 1){
-        lcd.print("REFLOW MODE");     
-      }
-      else if(selected_mode == 2){
-        lcd.print("PID TUNING");     
-      }
-      
-      
-    }//End of running_mode = 0
+        lcd.clear();
+        lcd.setCursor(0,0);     
+        lcd.print("T: ");
+        lcd.print(temperature,1);   
+        lcd.setCursor(9,0);      
+        lcd.print("SSR OFF"); 
+        
+        lcd.setCursor(0,1);
+        if(selected_mode == 0){
+          lcd.print("Select Mode");     
+        }
+        else if(selected_mode == 1){
+          lcd.print("REFLOW MODE");     
+        }
+        else if(selected_mode == 2){
+          lcd.print("PID TUNING");     
+        }
+    }
 
      //Mode 11 is cooldown. SSR is OFF
      else if(running_mode == 11){ 
@@ -358,6 +365,14 @@ void loop() {
       tone(buzzer, 2400, 150);
       delay(130);
       seconds = 0;                    //Reset timer
+    }
+    else if(selected_mode == 2){
+      running_mode = 1;
+        if (!tuning) {
+            myPID.SetMode(MANUAL);  // Set PID to MANUAL
+            tuning = true;
+            // No need to explicitly start the autotuning mode
+        }
     }
   }
   else if(digitalRead(but_4) && !but_4_state){
