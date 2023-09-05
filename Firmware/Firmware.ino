@@ -43,6 +43,13 @@ int buzzer = 6;
 int Thermistor1_PIN = A0;
 int Thermistor2_PIN = A1;  // Changed from A0 to A1
 
+// Buttons debouncing
+bool lastBut_3State = HIGH;
+bool lastBut_4State = HIGH;
+unsigned long lastDebounceTime_3 = 0;
+unsigned long lastDebounceTime_4 = 0;
+const long debounceDelay = 50;
+
 // Variables
 unsigned int millis_before, millis_before_2;  // We use these to create the loop refresh rate
 unsigned int millis_now = 0;
@@ -355,57 +362,71 @@ void loop() {
     
   }
 
-  if(!digitalRead(but_3) && but_3_state){
-    but_3_state = false;
-    selected_mode ++;   
-    tone(buzzer, 2300, 40);  
-    if(selected_mode > max_modes){
-      selected_mode = 0;
-    }
-    delay(150);
+  // Button Debouncing for but_3
+  bool but_3Reading = digitalRead(but_3);
+  if (but_3Reading != lastBut_3State) {
+    lastDebounceTime_3 = millis();
   }
-  else if(digitalRead(but_3) && !but_3_state){
-    but_3_state = true;
-  }
-
-  if(!digitalRead(but_4) && but_4_state){
-    if(running_mode == 1){
-      digitalWrite(SSR, HIGH);        //With HIGH the SSR is OFF
-      running_mode = 0;
-      selected_mode = 0; 
-      tone(buzzer, 2500, 150);
-      delay(130);
-      tone(buzzer, 2200, 150);
-      delay(130);
-      tone(buzzer, 2000, 150);
-      delay(130);
-    }
-    
-    but_4_state = false;
-    if(selected_mode == 0){
-      running_mode = 0;
-    }
-    else if(selected_mode == 1){
-      running_mode = 1;
-      myPID.SetMode(AUTOMATIC);
-      tone(buzzer, 2000, 150);
-      delay(130);
-      tone(buzzer, 2200, 150);
-      delay(130);
-      tone(buzzer, 2400, 150);
-      delay(130);
-      seconds = 0;                    //Reset timer
-    }
-    else if(selected_mode == 2){
-      running_mode = 1;
-        if (!tuning) {
-            myPID.SetMode(AUTOMATIC);  // Set PID to AUTOMATIC
-            tuning = true;
-            // No need to explicitly start the autotuning mode
+  if ((millis() - lastDebounceTime_3) > debounceDelay) {
+    if (but_3Reading != but_3_state) {
+      but_3_state = but_3Reading;
+      if (but_3_state == LOW) {
+        selected_mode++;
+        tone(buzzer, 2300, 40);
+        if(selected_mode > max_modes){
+          selected_mode = 0;
         }
+      }
     }
   }
-  else if(digitalRead(but_4) && !but_4_state){
-    but_4_state = true;
+  lastBut_3State = but_3Reading;
+
+  // Button Debouncing for but_4
+  bool but_4Reading = digitalRead(but_4);
+  if (but_4Reading != lastBut_4State) {
+    lastDebounceTime_4 = millis();
   }
+  if ((millis() - lastDebounceTime_4) > debounceDelay) {
+    if (but_4Reading != but_4_state) {
+      but_4_state = but_4Reading;
+      if (but_4_state == LOW) {
+        if(running_mode == 1){
+          digitalWrite(SSR, HIGH);        //With HIGH the SSR is OFF
+          running_mode = 0;
+          selected_mode = 0; 
+          tone(buzzer, 2500, 150);
+          delay(130);
+          tone(buzzer, 2200, 150);
+          delay(130);
+          tone(buzzer, 2000, 150);
+          delay(130);
+        }
+        
+        but_4_state = false;
+        if(selected_mode == 0){
+          running_mode = 0;
+        }
+        else if(selected_mode == 1){
+          running_mode = 1;
+          myPID.SetMode(AUTOMATIC);
+          tone(buzzer, 2000, 150);
+          delay(130);
+          tone(buzzer, 2200, 150);
+          delay(130);
+          tone(buzzer, 2400, 150);
+          delay(130);
+          seconds = 0;                    //Reset timer
+        }
+        else if(selected_mode == 2){
+          running_mode = 1;
+            if (!tuning) {
+                myPID.SetMode(AUTOMATIC);  // Set PID to AUTOMATIC
+                tuning = true;
+                // No need to explicitly start the autotuning mode
+            }
+        }
+      }
+    }
+  }
+  lastBut_4State = but_4Reading;
 }
