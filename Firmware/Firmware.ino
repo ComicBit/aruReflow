@@ -13,9 +13,15 @@
 // LCD Initialization
 LiquidCrystal_I2C lcd(0x27, 16, 2);  // Define LCD address as 0x27. Also try 0x3f if it doesn't work.
 
+// PID Settings
+float Kp = 2;        // Proportional gain. Adjust based on your system's response.
+float Ki = 0.0025;   // Integral gain. Adjust based on your system's response.
+float Kd = 9;        // Derivative gain. Adjust based on your system's response.
+float MAX_PID_VALUE = 180;  // Max PID output value. Adjust based on your system's capabilities.
+
 // PID Initialization
 double Setpoint, Input, Output;
-PID myPID(&Input, &Output, &Setpoint, 0, 0, 0, DIRECT);
+PID myPID(&Input, &Output, &Setpoint, Kp, Ki, Kd, DIRECT);
 PID_ATune aTune(&Input, &Output);
 bool tuning = false;
 
@@ -67,12 +73,6 @@ float refresh_rate = 500;  // LCD refresh rate in milliseconds. Adjust as necess
 // Temperature Reading Interval
 float pid_refresh_rate = 50;  // PID Refresh rate in milliseconds. Adjust as necessary.
 
-// PID Settings
-float Kp = 2;        // Proportional gain. Adjust based on your system's response.
-float Ki = 0.0025;   // Integral gain. Adjust based on your system's response.
-float Kd = 9;        // Derivative gain. Adjust based on your system's response.
-float MAX_PID_VALUE = 180;  // Max PID output value. Adjust based on your system's capabilities.
-
 // Reflow Settings
 float preheat_setpoint = 140;  // Mode 1 preheat ramp value is 140-150ºC
 float soak_setpoint = 150;  // Mode 1 soak is 150ºC for a few seconds
@@ -107,6 +107,7 @@ void setup() {
   aTune.SetNoiseBand(1);
   aTune.SetLookbackSec(30);
   digitalWrite(SSR, HIGH);  // Make sure SSR is OFF
+  myPID.SetOutputLimits(MIN_PID_VALUE, MAX_PID_VALUE); // Set output limits for PID
   /////////////////////////////////////////////////////////
 }
 
@@ -211,11 +212,9 @@ void loop() {
         Serial.print(" Kd: ");
         Serial.println(aTune.GetKd());
         
-        // Update PID parameters
+        // Update PID parameters and switch back to AUTOMATIC mode
         myPID.SetTunings(aTune.GetKp(), aTune.GetKi(), aTune.GetKd());
-
-        // SET Off PID
-        myPID.SetMode(MANUAL);
+        myPID.SetMode(AUTOMATIC);
       }
     } else if (!idleState) {
       myPID.Compute();
@@ -231,16 +230,20 @@ void loop() {
     }
     
     if(running_mode == 1){   
-      if(temperature < preheat_setpoint){
-        temp_setpoint = seconds*1.666;                    //Reach 150ºC till 90s (150/90=1.666)
-      }  
-        
-      if(temperature > preheat_setpoint && seconds < 90){
-        temp_setpoint = soak_setpoint;               
-      }   
-        
-      else if(seconds > 90 && seconds < 110){
-        temp_setpoint = reflow_setpoint;                 
+      if(seconds == 0) {
+        temp_setpoint = temperature;  // Set the initial setpoint to the current temperature
+      } else {
+        if(temperature < preheat_setpoint){
+          temp_setpoint = seconds*1.666;  // Reach 150ºC till 90s (150/90=1.666)
+        }  
+          
+        if(temperature > preheat_setpoint && seconds < 90){
+          temp_setpoint = soak_setpoint;               
+        }   
+          
+        else if(seconds > 90 && seconds < 110){
+          temp_setpoint = reflow_setpoint;                 
+        }
       }
        
       //Calculate PID
@@ -396,7 +399,7 @@ void loop() {
     else if(selected_mode == 2){
       running_mode = 1;
         if (!tuning) {
-            myPID.SetMode(MANUAL);  // Set PID to MANUAL
+            myPID.SetMode(AUTOMATIC);  // Set PID to AUTOMATIC
             tuning = true;
             // No need to explicitly start the autotuning mode
         }
