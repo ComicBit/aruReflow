@@ -32,6 +32,7 @@ float PID_ERROR, PREV_ERROR;
 int setTemperature = 150;
 int desiredCycles = 5;
 int cycleCounter = 0; 
+float temp_setpoint = 0;
 
 // Inputs and Outputs
 int but_1 = 12;
@@ -81,10 +82,17 @@ float refresh_rate = 500;  // LCD refresh rate in milliseconds. Adjust as necess
 float pid_refresh_rate = 50;  // PID Refresh rate in milliseconds. Adjust as necessary.
 
 // Reflow Settings
-float preheat_setpoint = 140;  // Mode 1 preheat ramp value is 140-150ºC
+float preheat_setpoint = 100;  // Mode 1 preheat ramp value is 100ºC
 float soak_setpoint = 150;  // Mode 1 soak is 150ºC for a few seconds
-float reflow_setpoint = 130;  // Mode 1 reflow peak is 130ºC
-float temp_setpoint = 0;  // Used for PID control
+float reflow_setpoint = 180;  // Mode 1 reflow peak is 180ºC
+// Time zones
+float preheat_time = 60;  // Preheat time in seconds
+float soak_time = 90;     // Soak time in seconds
+float reflow_time = 40;   // Reflow time in seconds
+float cooling_rate = 3.0; // Cooling rate in degrees per second
+float min_temp = 0; // Temperature to reach for the cooldown
+
+float total_time_before_cooling = preheat_time + soak_time + reflow_time;
 
 void setup() {
   Serial.begin(9600);  // Initialize serial communication at 9600 baud
@@ -108,7 +116,7 @@ void setup() {
   T0 = 25 + 273.15;  // Initialize T0 for the new temperature reading method
 
   ///////////////////////PID///////////////////////////
-  Setpoint = 150;  // Your desired temperature
+  Setpoint = 150;  // PID Calibration temperature
   aTune.SetOutputStep(50);
   aTune.SetControlType(1);
   aTune.SetNoiseBand(1);
@@ -235,21 +243,25 @@ void loop() {
         }
       }
     }
-    
+
     if(running_mode == 1){   
-      if(seconds == 0) {
-        temp_setpoint = temperature;  // Set the initial setpoint to the current temperature
-      } else {
-        if(temperature < preheat_setpoint){
-          temp_setpoint = seconds*1.666;  // Reach 150ºC till 90s (150/90=1.666)
-        }  
-          
-        if(temperature > preheat_setpoint && seconds < 90){
-          temp_setpoint = soak_setpoint;               
-        }   
-          
-        else if(seconds > 90 && seconds < 110){
-          temp_setpoint = reflow_setpoint;                 
+      if(seconds < preheat_time) {
+        temp_setpoint = preheat_setpoint;  // Preheat phase
+      } 
+      else if(seconds < (preheat_time + soak_time)) {
+        temp_setpoint = soak_setpoint;  // Soak phase
+      } 
+      else if(seconds < (preheat_time + soak_time + reflow_time)) {
+        temp_setpoint = reflow_setpoint;  // Reflow phase
+      } 
+      else {
+        // Cooling phase
+        float time_in_cooling_phase = seconds - (preheat_time + soak_time + reflow_time);
+        temp_setpoint = reflow_setpoint - (cooling_rate * time_in_cooling_phase);
+        
+        if(temp_setpoint <= cooldown_temp) {
+          temp_setpoint = cooldown_temp;
+          running_mode = 0;  // End of cycle, reset to idle mode
         }
       }
        
@@ -273,24 +285,32 @@ void loop() {
       
       PREV_ERROR = PID_ERROR;
       
-      if(seconds > 130){
+      if(seconds > total_time_before_cooling){
         digitalWrite(SSR, HIGH);            //With HIGH the SSR is OFF
         temp_setpoint = 0;
         running_mode = 10;                  //Cooldown mode        
-      }     
+      }
     }//End of running_mode = 1
 
 
     //Mode 10 is between reflow and cooldown
-    if(running_mode == 10){
-      lcd.clear();
-      lcd.setCursor(0,1);     
-      lcd.print("    COMPLETE    ");
-      tone(buzzer, 1800, 1000);    
-      seconds = 0;              //Reset timer
-      running_mode = 11;
-      delay(3000);
-    }    
+    if(running_mode == 10) {
+      if(temp_setpoint > min_temp) {
+        temp_setpoint -= cooling_rate;
+      } else {
+        // The temperature has reached the minimum value, so you can turn off the SSR
+        digitalWrite(SSR, HIGH);
+        lcd.clear();
+        lcd.setCursor(0,1);     
+        lcd.print("    COMPLETE    ");
+        tone(buzzer, 1800, 1000);    
+        seconds = 0;              //Reset timer
+        running_mode = 11;
+        delay(3000);
+      }
+    } else if(seconds > total_time_before_cooling) {
+      running_mode = 10; // Enter cooldown mode
+    }
   }//End of > millis_before_2 (Refresh rate of the PID code)
   
 
@@ -424,6 +444,7 @@ void loop() {
                 tuning = true;
                 // No need to explicitly start the autotuning mode
             }
+          seconds = 0;  
         }
       }
     }
