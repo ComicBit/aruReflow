@@ -85,14 +85,30 @@ float pid_refresh_rate = 50;  // PID Refresh rate in milliseconds. Adjust as nec
 float preheat_setpoint = 100;  // Mode 1 preheat ramp value is 100ºC
 float soak_setpoint = 150;  // Mode 1 soak is 150ºC for a few seconds
 float reflow_setpoint = 180;  // Mode 1 reflow peak is 180ºC
+float cooldown_setpoint = 0;
 // Time zones
 float preheat_time = 60;  // Preheat time in seconds
 float soak_time = 90;     // Soak time in seconds
 float reflow_time = 40;   // Reflow time in seconds
 float cooling_rate = 3.0; // Cooling rate in degrees per second
 float min_temp = 0; // Temperature to reach for the cooldown
+float cooldown_time = 10;
 
 float total_time_before_cooling = preheat_time + soak_time + reflow_time;
+
+enum ReflowState {
+  IDLE,
+  PREHEAT_WARMUP,
+  PREHEAT,
+  SOAK_WARMUP,
+  SOAK,
+  REFLOW_WARMUP,
+  REFLOW,
+  COOLDOWN
+};
+
+ReflowState current_state = IDLE;
+unsigned long state_start_time = 0;
 
 void setup() {
   Serial.begin(9600);  // Initialize serial communication at 9600 baud
@@ -274,6 +290,30 @@ void printSelectedMode(int selected_mode) {
   }
 }
 
+void calculatePID(float temperature) {
+  //Calculate PID
+  PID_ERROR = temp_setpoint - temperature;
+  PID_P = Kp*PID_ERROR;
+  PID_I = PID_I+(Ki*PID_ERROR);      
+  PID_D = Kd * (PID_ERROR-PREV_ERROR);
+  PID_Output = PID_P + PID_I + PID_D;
+  
+  //Define maximum PID values
+  if(PID_Output > MAX_PID_VALUE){
+    PID_Output = MAX_PID_VALUE;
+  }
+  else if (PID_Output < MIN_PID_VALUE){
+    PID_Output = MIN_PID_VALUE;
+  }
+  
+  //Since the SSR is ON with LOW, we invert the pwm signal
+  pwm_value = 255 - PID_Output;
+  
+  analogWrite(SSR, pwm_value);           //We change the Duty Cycle applied to the SSR
+  
+  PREV_ERROR = PID_ERROR;
+}
+
 void loop() {
 
   static float last_temp_setpoint = -1;
@@ -331,54 +371,92 @@ void loop() {
       }
     }
 
-    if(running_mode == 1){   
-      if(seconds < preheat_time) {
-        temp_setpoint = preheat_setpoint;  // Preheat phase
-      } 
-      else if(seconds < (preheat_time + soak_time)) {
-        temp_setpoint = soak_setpoint;  // Soak phase
-      } 
-      else if(seconds < (preheat_time + soak_time + reflow_time)) {
-        temp_setpoint = reflow_setpoint;  // Reflow phase
-      } 
-      else {
-        // Cooling phase
-        float time_in_cooling_phase = seconds - (preheat_time + soak_time + reflow_time);
-        temp_setpoint = reflow_setpoint - (cooling_rate * time_in_cooling_phase);
-        
-        if(temp_setpoint <= cooldown_temp) {
-          temp_setpoint = cooldown_temp;
-          running_mode = 0;  // End of cycle, reset to idle mode
-        }
+    if (running_mode == 1) {
+      myPID.SetMode(AUTOMATIC);
+      if (current_state == IDLE) {
+        current_state = PREHEAT_WARMUP;
+        temp_setpoint = preheat_setpoint;
+        state_start_time = millis();
       }
-       
-      //Calculate PID
-      PID_ERROR = temp_setpoint - temperature;
-      PID_P = Kp*PID_ERROR;
-      PID_I = PID_I+(Ki*PID_ERROR);      
-      PID_D = Kd * (PID_ERROR-PREV_ERROR);
-      PID_Output = PID_P + PID_I + PID_D;
-      //Define maximun PID values
-      if(PID_Output > MAX_PID_VALUE){
-        PID_Output = MAX_PID_VALUE;
-      }
-      else if (PID_Output < MIN_PID_VALUE){
-        PID_Output = MIN_PID_VALUE;
-      }
-      //Since the SSR is ON with LOW, we invert the pwm singal
-      pwm_value = 255 - PID_Output;
-      
-      analogWrite(SSR,pwm_value);           //We change the Duty Cycle applied to the SSR
-      
-      PREV_ERROR = PID_ERROR;
-      
-      if(seconds > total_time_before_cooling){
-        digitalWrite(SSR, HIGH);            //With HIGH the SSR is OFF
-        temp_setpoint = 0;
-        running_mode = 10;                  //Cooldown mode        
-      }
-    }//End of running_mode = 1
 
+        unsigned long elapsed_time = millis() - state_start_time;
+
+        // State machine logic
+        switch (current_state) {
+
+          case PREHEAT_WARMUP:
+            if (temperature >= temp_setpoint) {
+              current_state = PREHEAT;
+              state_start_time = millis(); // Start the timer when the target temperature is reached
+            }
+            Serial.print("Preheat Warmup\n");
+            calculatePID(temperature);
+            break;
+
+          case PREHEAT:
+            if (elapsed_time >= preheat_time * 1000) {
+              current_state = SOAK_WARMUP;
+              temp_setpoint = soak_setpoint;
+              state_start_time = 0;
+            }
+            Serial.print("Preheat Phase - Waiting ");Serial.print(preheat_time);Serial.print(" sec\n");
+            calculatePID(temperature);
+            break;
+
+          case SOAK_WARMUP:
+            if (temperature >= temp_setpoint) {
+              current_state = SOAK;
+              state_start_time = millis();
+            }
+            Serial.print("Soak Warmup\n");
+            calculatePID(temperature);
+            break;
+
+          case SOAK:
+            if (elapsed_time >= soak_time * 1000) {
+              current_state = REFLOW_WARMUP;
+              temp_setpoint = reflow_setpoint;
+              state_start_time = 0;
+            }
+            Serial.print("Soak Phase - Waiting ");Serial.print(soak_time);Serial.print(" sec\n");
+            calculatePID(temperature);
+            break;
+
+          case REFLOW_WARMUP:
+            if (temperature >= temp_setpoint) {
+              current_state = REFLOW;
+              state_start_time = millis();
+            }
+            Serial.print("Reflow Warmup\n");
+            calculatePID(temperature);
+            break;
+
+          case REFLOW:
+            if (elapsed_time >= reflow_time * 1000) {
+              current_state = COOLDOWN;
+              temp_setpoint = cooldown_setpoint;
+              state_start_time = 0;
+            }
+            Serial.print("Reflow Phase - Waiting ");Serial.print(reflow_time);Serial.print(" sec\n");
+            calculatePID(temperature);
+            break;
+
+          case COOLDOWN:
+            if (elapsed_time >= cooldown_time * 1000) {
+              current_state = IDLE;
+              temp_setpoint = cooldown_setpoint;
+              state_start_time = 0;
+            }
+            Serial.print("Cooldown Phase\n");
+            analogWrite(SSR, 255);
+            break;
+        }
+
+    } else {
+      current_state = IDLE;
+      temp_setpoint = 0;
+      state_start_time = 0;
+    }
 
     //Mode 10 is between reflow and cooldown
     if(running_mode == 10) {
@@ -395,8 +473,6 @@ void loop() {
         running_mode = 11;
         delay(3000);
       }
-    } else if(seconds > total_time_before_cooling) {
-      running_mode = 10; // Enter cooldown mode
     }
   }//End of > millis_before_2 (Refresh rate of the PID code)
   
