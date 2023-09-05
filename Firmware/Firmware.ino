@@ -192,10 +192,97 @@ float standardDeviation(float arr[], int size, float mean) {
   return sqrt(sum / size);
 }
 
+char line1[16], line2[16];
+float prev_temperature = -1;
+float prev_temp_setpoint = -1;
+float prev_pwm_value = -1;
+int prev_running_mode = -1;
+int prev_selected_mode = -1;
+float prev_seconds = -1;
+
+void updateDisplay(float temperature, float temp_setpoint, float pwm_value, int running_mode, int selected_mode, float seconds, const char* transition_phase = nullptr) {
+  
+  char temp_str[6];
+  dtostrf(temperature, 5, 1, temp_str);
+  
+  if (temperature != prev_temperature) {
+    sprintf(line1, "T: %s", temp_str);
+    lcd.setCursor(0,0);     
+    lcd.print(line1);
+    prev_temperature = temperature;
+  }
+
+  if (transition_phase) {
+    lcd.clear();
+    lcd.setCursor(0,0);
+    lcd.print(transition_phase);
+    delay(1000); // Delay for a second to allow the user to read the message
+    lcd.clear();
+  }
+
+  if (running_mode != prev_running_mode) {
+    lcd.setCursor(9,0);
+    if (running_mode == 0) {
+      lcd.print("SSR OFF   ");
+    } else if (running_mode == 1) {
+      lcd.print("SSR ON    ");
+    } else if (running_mode == 10) {
+      lcd.setCursor(0,1);     
+      lcd.print("    COOLING    ");
+    } else if (running_mode == 11) {
+      lcd.setCursor(0,1);     
+      lcd.print("    COMPLETE    ");
+    }
+    prev_running_mode = running_mode;
+  }
+
+  if (running_mode == 0 && selected_mode != prev_selected_mode) {
+    lcd.setCursor(0,1);
+    printSelectedMode(selected_mode);
+    prev_selected_mode = selected_mode;
+  }
+
+  if (running_mode == 1 && (temp_setpoint != prev_temp_setpoint || pwm_value != prev_pwm_value || seconds != prev_seconds)) {
+    sprintf(line2, "S%d PWM%d %ds    ", int(temp_setpoint), int(pwm_value), int(seconds));
+    lcd.setCursor(0,1); 
+    lcd.print(line2);
+    prev_temp_setpoint = temp_setpoint;
+    prev_pwm_value = pwm_value;
+    prev_seconds = seconds;
+  }
+}
+
+void printSelectedMode(int selected_mode) {
+  lcd.print("                "); // Clear the line
+  lcd.setCursor(0,1);
+  switch(selected_mode) {
+    case 0:
+      lcd.print("Select Mode");     
+      break;
+
+    case 1:
+      lcd.print("REFLOW MODE");     
+      break;
+
+    case 2:
+      lcd.print("PID TUNING");     
+      break;
+
+    default:
+      // Handle invalid selected_mode values here
+      break;
+  }
+}
+
 void loop() {
+
+  static float last_temp_setpoint = -1;
+
   millis_now = millis();
   if(millis_now - millis_before_2 > pid_refresh_rate){    //Refresh rate of the PID
     millis_before_2 = millis(); 
+
+    const char* transition_message = nullptr; // Add this line to hold the transition message
     
     temperature = readTemperature();
     Input = temperature;  // Update Input with the current temperature
@@ -319,67 +406,33 @@ void loop() {
   if(millis_now - millis_before > refresh_rate){          //Refresh rate of prntiong on the LCD
     millis_before = millis();   
     seconds = seconds + (refresh_rate/1000);              //We count time in seconds
-    
 
-    //Mode 0 is with SSR OFF (we can selcet mode with buttons)
-    if(running_mode == 0){ 
-        digitalWrite(SSR, HIGH);  // With HIGH the SSR is OFF
-        myPID.SetMode(MANUAL);  // Deactivate PID here
-        lcd.clear();
-        lcd.setCursor(0,0);     
-        lcd.print("T: ");
-        lcd.print(temperature,1);   
-        lcd.setCursor(9,0);      
-        lcd.print("SSR OFF"); 
-        
-        lcd.setCursor(0,1);
-        if(selected_mode == 0){
-          lcd.print("Select Mode");     
-        }
-        else if(selected_mode == 1){
-          lcd.print("REFLOW MODE");     
-        }
-        else if(selected_mode == 2){
-          lcd.print("PID TUNING");     
-        }
+    const char* transition_message = nullptr; // Add this line to hold the transition message
+
+    // Detect phase transitions and set the transition message
+    if (temp_setpoint != last_temp_setpoint) {
+      if (temp_setpoint == preheat_setpoint) {
+        transition_message = "PREHEAT PHASE";
+      } else if (temp_setpoint == soak_setpoint) {
+        transition_message = "SOAK PHASE";
+      } else if (temp_setpoint == reflow_setpoint) {
+        transition_message = "REFLOW PHASE";
+      } else if (temp_setpoint == cooldown_temp) {
+        transition_message = "COOL DOWN PHASE";
+      }
+      last_temp_setpoint = temp_setpoint; // Update the last setpoint
     }
 
+    updateDisplay(temperature, temp_setpoint, pwm_value, running_mode, selected_mode, seconds, transition_message);
+
      //Mode 11 is cooldown. SSR is OFF
-     else if(running_mode == 11){ 
+     if(running_mode == 11){ 
       if(temperature < cooldown_temp){
         running_mode = 0; 
         tone(buzzer, 1000, 100); 
       }
       digitalWrite(SSR, HIGH);
-      lcd.clear();
-      lcd.setCursor(0,0);     
-      lcd.print("T: ");
-      lcd.print(temperature,1);   
-      lcd.setCursor(9,0);      
-      lcd.print("SSR OFF"); 
-       
-      lcd.setCursor(0,1);       
-      lcd.print("    COOLDOWN    ");  
     }
-
-    else if(running_mode == 1){            
-      lcd.clear();
-      lcd.setCursor(0,0);     
-      lcd.print("T: ");
-      lcd.print(temperature,1);  
-      lcd.setCursor(9,0);       
-      lcd.print("SSR ON"); 
-       
-      lcd.setCursor(0,1); 
-      lcd.print("S");  lcd.print(temp_setpoint,0); 
-      lcd.setCursor(5,1);     
-      lcd.print("PWM");  lcd.print(pwm_value,0); 
-      lcd.setCursor(12,1); 
-      lcd.print(seconds,0);  
-      lcd.print("s");         
-    }
-    
-    
   }
 
   // Button Debouncing for but_3
