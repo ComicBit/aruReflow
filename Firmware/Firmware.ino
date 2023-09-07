@@ -35,8 +35,6 @@ int cycleCounter = 0;
 float temp_setpoint = 0;
 
 // Inputs and Outputs
-int but_1 = 12;
-int but_2 = 11;
 int but_3 = 10; 
 int but_4 = 9;
 int SSR = 4;
@@ -117,8 +115,6 @@ void setup() {
   digitalWrite(SSR, HIGH);        //Make sure we start with the SSR OFF (is off with HIGH)
   pinMode(buzzer, OUTPUT); 
   digitalWrite(buzzer, LOW);  
-  pinMode(but_1, INPUT_PULLUP);
-  pinMode(but_2, INPUT_PULLUP);
   pinMode(but_3, INPUT_PULLUP);
   pinMode(but_4, INPUT_PULLUP);
   pinMode(Thermistor1_PIN, INPUT);
@@ -184,8 +180,8 @@ float readTemperature() {
   // Update history index
   historyIndex = (historyIndex + 1) % HISTORY_SIZE;
 
-  // Compute the final temperature
-  float finalTemp = (average(historyA0, HISTORY_SIZE) + average(historyA1, HISTORY_SIZE)) / 2.0;
+  // Compute the final temperature using exponential moving average for smoothing
+  float finalTemp = (exponentialMovingAverage(historyA0, HISTORY_SIZE) + exponentialMovingAverage(historyA1, HISTORY_SIZE)) / 2.0;
 
   return finalTemp;
 }
@@ -200,18 +196,6 @@ float exponentialMovingAverage(float arr[], int size) {
 
   return ema;
 }
-
-//float readRawTemperature(int pin) {
-  //float VRT = analogRead(pin);              
-  //VRT  = (VCC / 1023.00) * VRT;      
-  //float VR = VCC - VRT;
-  //float RT = (VRT * R) / (VCC - VRT);
-  // float RT = VRT / (VR / R);  old calculation        
-  //float ln = log(RT / RT0);
-//  float TX = (1 / ((ln / B) + (1 / T0))); 
-//  TX =  TX - 273.15;                 
-//  return TX;
-//}
 
 float readRawTemperature(int pin) {
   float voltage = (analogRead(pin) / 1023.0) * VCC;
@@ -475,8 +459,10 @@ void loop() {
 
           case COOLDOWN:
             if (elapsed_time >= cooldown_time * 1000) {
-              current_state = IDLE;
               temp_setpoint = cooldown_setpoint;
+              state_start_time = 0;
+              running_mode = 10;
+              selected_mode = 0;
               state_start_time = 0;
             }
             Serial.print("Cooldown Phase\n");
