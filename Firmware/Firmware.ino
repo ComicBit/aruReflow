@@ -144,7 +144,6 @@ void setup() {
   analogReference(EXTERNAL);
 }
 
-// Function to read temperature using the new method
 float readTemperature() {
   // Read from both sensors
   float newTempA0 = readRawTemperature(Thermistor1_PIN);
@@ -159,28 +158,38 @@ float readTemperature() {
     firstRun = false;
   }
 
-  // Calculate average and standard deviation
+  // Calculate average and interquartile range
   float avgA0 = average(historyA0, HISTORY_SIZE);
   float avgA1 = average(historyA1, HISTORY_SIZE);
-  float stdDevA0 = standardDeviation(historyA0, HISTORY_SIZE, avgA0);
-  float stdDevA1 = standardDeviation(historyA1, HISTORY_SIZE, avgA1);
+  float iqrA0 = calculateIQR(historyA0, HISTORY_SIZE);
+  float iqrA1 = calculateIQR(historyA1, HISTORY_SIZE);
 
-  // Update history arrays
-  historyA0[historyIndex] = newTempA0;
-  historyA1[historyIndex] = newTempA1;
-
-  // Check for rapid changes and take appropriate action
-  if (abs(newTempA0 - avgA0) > (2.0 * stdDevA0) || abs(newTempA1 - avgA1) > (2.0 * stdDevA1)) {
-    // Rapid change detected, take appropriate action (e.g., log a warning, trigger an alert, etc.)
+  // Check for outliers using Tukey's method and ignore them if found
+  if (abs(newTempA0 - avgA0) <= (1.5 * iqrA0)) {
+    historyA0[historyIndex] = newTempA0;
+  }
+  if (abs(newTempA1 - avgA1) <= (1.5 * iqrA1)) {
+    historyA1[historyIndex] = newTempA1;
   }
 
   // Update history index
   historyIndex = (historyIndex + 1) % HISTORY_SIZE;
 
-  // Compute the final temperature
-  float finalTemp = (average(historyA0, HISTORY_SIZE) + average(historyA1, HISTORY_SIZE)) / 2.0;
+  // Compute the final temperature using exponential moving average for smoothing
+  float finalTemp = (exponentialMovingAverage(historyA0, HISTORY_SIZE) + exponentialMovingAverage(historyA1, HISTORY_SIZE)) / 2.0;
 
   return finalTemp;
+}
+
+float exponentialMovingAverage(float arr[], int size) {
+  float alpha = 0.1; // Smoothing factor, adjust based on your needs
+  float ema = arr[0]; // Initialize with the first value
+
+  for (int i = 1; i < size; i++) {
+    ema = (1 - alpha) * ema + alpha * arr[i];
+  }
+
+  return ema;
 }
 
 //float readRawTemperature(int pin) {
