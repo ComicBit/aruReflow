@@ -7,7 +7,7 @@
 #define HISTORY_SIZE 5
 #define RT0 100000   // Ω
 #define B 3950       // K
-#define VCC 5        // Supply voltage
+#define VCC 3.3        // Supply voltage
 #define R 100000     // R=100KΩ
 
 // LCD Initialization
@@ -39,7 +39,7 @@ int but_1 = 12;
 int but_2 = 11;
 int but_3 = 10; 
 int but_4 = 9;
-int SSR = 3;
+int SSR = 4;
 int buzzer = 6;
 int Thermistor1_PIN = A0;
 int Thermistor2_PIN = A1;  // Changed from A0 to A1
@@ -140,6 +140,8 @@ void setup() {
   digitalWrite(SSR, HIGH);  // Make sure SSR is OFF
   myPID.SetOutputLimits(MIN_PID_VALUE, MAX_PID_VALUE); // Set output limits for PID
   /////////////////////////////////////////////////////////
+
+  analogReference(EXTERNAL);
 }
 
 // Function to read temperature using the new method
@@ -181,14 +183,26 @@ float readTemperature() {
   return finalTemp;
 }
 
+//float readRawTemperature(int pin) {
+  //float VRT = analogRead(pin);              
+  //VRT  = (VCC / 1023.00) * VRT;      
+  //float VR = VCC - VRT;
+  //float RT = (VRT * R) / (VCC - VRT);
+  // float RT = VRT / (VR / R);  old calculation        
+  //float ln = log(RT / RT0);
+//  float TX = (1 / ((ln / B) + (1 / T0))); 
+//  TX =  TX - 273.15;                 
+//  return TX;
+//}
+
 float readRawTemperature(int pin) {
-  float VRT = analogRead(pin);              
-  VRT  = (VCC / 1023.00) * VRT;      
-  float VR = VCC - VRT;
-  float RT = VRT / (VR / R);               
+  float voltage = (analogRead(pin) / 1023.0) * VCC;
+  float RT = (voltage * R) / (VCC - voltage); 
+
   float ln = log(RT / RT0);
   float TX = (1 / ((ln / B) + (1 / T0))); 
-  TX =  TX - 273.15;                 
+  TX = TX - 273.15; // Convert Kelvin to Celsius
+
   return TX;
 }
 
