@@ -144,7 +144,6 @@ void setup() {
   analogReference(EXTERNAL);
 }
 
-// Function to read temperature using the new method
 float readTemperature() {
   // Read from both sensors
   float newTempA0 = readRawTemperature(Thermistor1_PIN);
@@ -165,13 +164,21 @@ float readTemperature() {
   float stdDevA0 = standardDeviation(historyA0, HISTORY_SIZE, avgA0);
   float stdDevA1 = standardDeviation(historyA1, HISTORY_SIZE, avgA1);
 
-  // Update history arrays
-  historyA0[historyIndex] = newTempA0;
-  historyA1[historyIndex] = newTempA1;
+  // Check for outliers and update history arrays accordingly
+  if (abs(newTempA0 - avgA0) > (2.0 * stdDevA0)) {
+    // Outlier detected for sensor A0, ignore this reading and keep the last valid value in the history array
+    historyA0[historyIndex] = historyA0[(historyIndex - 1 + HISTORY_SIZE) % HISTORY_SIZE];
+  } else {
+    // Valid reading, update the history array
+    historyA0[historyIndex] = newTempA0;
+  }
 
-  // Check for rapid changes and take appropriate action
-  if (abs(newTempA0 - avgA0) > (2.0 * stdDevA0) || abs(newTempA1 - avgA1) > (2.0 * stdDevA1)) {
-    // Rapid change detected, take appropriate action (e.g., log a warning, trigger an alert, etc.)
+  if (abs(newTempA1 - avgA1) > (2.0 * stdDevA1)) {
+    // Outlier detected for sensor A1, ignore this reading and keep the last valid value in the history array
+    historyA1[historyIndex] = historyA1[(historyIndex - 1 + HISTORY_SIZE) % HISTORY_SIZE];
+  } else {
+    // Valid reading, update the history array
+    historyA1[historyIndex] = newTempA1;
   }
 
   // Update history index
@@ -181,6 +188,17 @@ float readTemperature() {
   float finalTemp = (average(historyA0, HISTORY_SIZE) + average(historyA1, HISTORY_SIZE)) / 2.0;
 
   return finalTemp;
+}
+
+float exponentialMovingAverage(float arr[], int size) {
+  float alpha = 0.1; // Smoothing factor, adjust based on your needs
+  float ema = arr[0]; // Initialize with the first value
+
+  for (int i = 1; i < size; i++) {
+    ema = (1 - alpha) * ema + alpha * arr[i];
+  }
+
+  return ema;
 }
 
 //float readRawTemperature(int pin) {
