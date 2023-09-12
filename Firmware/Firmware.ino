@@ -35,8 +35,6 @@ int cycleCounter = 0;
 float temp_setpoint = 0;
 
 // Inputs and Outputs
-int but_1 = 12;
-int but_2 = 11;
 int but_3 = 10; 
 int but_4 = 9;
 int SSR = 4;
@@ -117,8 +115,6 @@ void setup() {
   digitalWrite(SSR, HIGH);        //Make sure we start with the SSR OFF (is off with HIGH)
   pinMode(buzzer, OUTPUT); 
   digitalWrite(buzzer, LOW);  
-  pinMode(but_1, INPUT_PULLUP);
-  pinMode(but_2, INPUT_PULLUP);
   pinMode(but_3, INPUT_PULLUP);
   pinMode(but_4, INPUT_PULLUP);
   pinMode(Thermistor1_PIN, INPUT);
@@ -471,9 +467,11 @@ void loop() {
 
           case COOLDOWN:
             if (elapsed_time >= cooldown_time * 1000) {
-              current_state = IDLE;
-              temp_setpoint = cooldown_setpoint;
-              state_start_time = 0;
+              temp_setpoint = cooldown_setpoint; 
+              state_start_time = 0; 
+              running_mode = 10; 
+              selected_mode = 0; 
+              state_start_time = 0; 
             }
             Serial.print("Cooldown Phase\n");
             analogWrite(SSR, 255);
