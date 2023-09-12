@@ -179,31 +179,6 @@ float readTemperature() {
   return finalTemp;
 }
 
-float exponentialMovingAverage(float arr[], int size) {
-  float alpha = 0.1; // Smoothing factor, adjust based on your needs
-  float ema = arr[0]; // Initialize with the first value
-
-  for (int i = 1; i < size; i++) {
-    ema = (1 - alpha) * ema + alpha * arr[i];
-  }
-
-  return ema;
-}
-
-float calculateIQR(float arr[], int size) {
-  float Q1, Q3;
-  // Assuming arr is sorted
-  if(size % 2 == 0) {
-    Q1 = (arr[size / 4] + arr[size / 4 - 1]) / 2.0;
-    Q3 = (arr[3 * size / 4] + arr[3 * size / 4 - 1]) / 2.0;
-  } else {
-    Q1 = arr[size / 4];
-    Q3 = arr[3 * size / 4];
-  }
-  
-  return Q3 - Q1;
-}
-
 float readRawTemperature(int pin) {
   float voltage = (analogRead(pin) / 1023.0) * VCC;
   float RT = (voltage * R) / (VCC - voltage); 
@@ -221,14 +196,6 @@ float average(float arr[], int size) {
     sum += arr[i];
   }
   return sum / size;
-}
-
-float standardDeviation(float arr[], int size, float mean) {
-  float sum = 0.0;
-  for (int i = 0; i < size; i++) {
-    sum += pow(arr[i] - mean, 2);
-  }
-  return sqrt(sum / size);
 }
 
 char line1[16], line2[16];
@@ -351,7 +318,7 @@ void loop() {
     Input = temperature;  // Update Input with the current temperature
 
     if (tuning) {
-      tuning = true;
+      temperature = setTemperature; // Set the Setpoint to setTemperature before starting the tuning
       int val = aTune.Runtime();
       Serial.println(Input);  // Send the current temperature to the Serial Plotter
 
@@ -592,12 +559,12 @@ void loop() {
           seconds = 0;                    //Reset timer
         }
         else if(selected_mode == 2){
-          running_mode = 1;
-            if (!tuning) {
-                myPID.SetMode(AUTOMATIC);  // Set PID to AUTOMATIC
-                tuning = true;
-                // No need to explicitly start the autotuning mode
-            }
+          running_mode = 2;
+          if (!tuning) {
+              myPID.SetMode(AUTOMATIC);  // Set PID to AUTOMATIC
+              tuning = true;
+              // No need to explicitly start the autotuning mode
+          }
           seconds = 0;  
         }
       }
