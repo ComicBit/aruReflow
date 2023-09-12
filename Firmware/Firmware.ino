@@ -144,6 +144,9 @@ void setup() {
   analogReference(EXTERNAL);
 }
 
+int historyIndexA0 = 0;
+int historyIndexA1 = 0;
+
 float readTemperature() {
   // Read from both sensors
   float newTempA0 = readRawTemperature(Thermistor1_PIN);
@@ -158,25 +161,25 @@ float readTemperature() {
     firstRun = false;
   }
 
-  // Calculate average and interquartile range
+  // Calculate average
   float avgA0 = average(historyA0, HISTORY_SIZE);
   float avgA1 = average(historyA1, HISTORY_SIZE);
-  float iqrA0 = calculateIQR(historyA0, HISTORY_SIZE);
-  float iqrA1 = calculateIQR(historyA1, HISTORY_SIZE);
 
-  // Check for outliers using Tukey's method and ignore them if found
-  if (abs(newTempA0 - avgA0) <= (1.5 * iqrA0)) {
-    historyA0[historyIndex] = newTempA0;
+  // Check for outliers using a simpler method and ignore them if found
+  if (abs(newTempA0 - avgA0) <= (0.2 * avgA0)) {
+    historyA0[historyIndexA0] = newTempA0;
+    historyIndexA0 = (historyIndexA0 + 1) % HISTORY_SIZE;
   }
-  if (abs(newTempA1 - avgA1) <= (1.5 * iqrA1)) {
-    historyA1[historyIndex] = newTempA1;
+  if (abs(newTempA1 - avgA1) <= (0.2 * avgA1)) {
+    historyA1[historyIndexA1] = newTempA1;
+    historyIndexA1 = (historyIndexA1 + 1) % HISTORY_SIZE;
   }
 
-  // Update history index
-  historyIndex = (historyIndex + 1) % HISTORY_SIZE;
-
-  // Compute the final temperature using exponential moving average for smoothing
-  float finalTemp = (exponentialMovingAverage(historyA0, HISTORY_SIZE) + exponentialMovingAverage(historyA1, HISTORY_SIZE)) / 2.0;
+  // Compute the final temperature with simple smoothing
+  float finalTemp = (average(historyA0, HISTORY_SIZE) + average(historyA1, HISTORY_SIZE)) / 2.0;
+  static float previousTemp = finalTemp;
+  finalTemp = 0.8 * previousTemp + 0.2 * finalTemp;
+  previousTemp = finalTemp;
 
   return finalTemp;
 }
@@ -192,17 +195,19 @@ float exponentialMovingAverage(float arr[], int size) {
   return ema;
 }
 
-//float readRawTemperature(int pin) {
-  //float VRT = analogRead(pin);              
-  //VRT  = (VCC / 1023.00) * VRT;      
-  //float VR = VCC - VRT;
-  //float RT = (VRT * R) / (VCC - VRT);
-  // float RT = VRT / (VR / R);  old calculation        
-  //float ln = log(RT / RT0);
-//  float TX = (1 / ((ln / B) + (1 / T0))); 
-//  TX =  TX - 273.15;                 
-//  return TX;
-//}
+float calculateIQR(float arr[], int size) {
+  float Q1, Q3;
+  // Assuming arr is sorted
+  if(size % 2 == 0) {
+    Q1 = (arr[size / 4] + arr[size / 4 - 1]) / 2.0;
+    Q3 = (arr[3 * size / 4] + arr[3 * size / 4 - 1]) / 2.0;
+  } else {
+    Q1 = arr[size / 4];
+    Q3 = arr[3 * size / 4];
+  }
+  
+  return Q3 - Q1;
+}
 
 float readRawTemperature(int pin) {
   float voltage = (analogRead(pin) / 1023.0) * VCC;
