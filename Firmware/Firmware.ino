@@ -40,7 +40,7 @@ int but_4 = 9;
 int SSR = 4;
 int buzzer = 6;
 int Thermistor1_PIN = A0;
-int Thermistor2_PIN = A1;  // Changed from A0 to A1
+int Thermistor2_PIN = A1;
 
 // Buttons debouncing
 bool lastBut_3State = HIGH;
@@ -71,6 +71,8 @@ float historyA1[HISTORY_SIZE];
 int historyIndex = 0;
 bool firstRun = true;
 bool idleState = true;
+int historyIndexA0 = 0;
+int historyIndexA1 = 0;
 
 // ================== USER CONFIGURABLE SETTINGS ==================
 // Screen Refresh Settings
@@ -154,34 +156,25 @@ float readTemperature() {
     firstRun = false;
   }
 
-  // Calculate average and standard deviation
+  // Calculate average
   float avgA0 = average(historyA0, HISTORY_SIZE);
   float avgA1 = average(historyA1, HISTORY_SIZE);
-  float stdDevA0 = standardDeviation(historyA0, HISTORY_SIZE, avgA0);
-  float stdDevA1 = standardDeviation(historyA1, HISTORY_SIZE, avgA1);
 
-  // Check for outliers and update history arrays accordingly
-  if (abs(newTempA0 - avgA0) > (2.0 * stdDevA0)) {
-    // Outlier detected for sensor A0, ignore this reading and keep the last valid value in the history array
-    historyA0[historyIndex] = historyA0[(historyIndex - 1 + HISTORY_SIZE) % HISTORY_SIZE];
-  } else {
-    // Valid reading, update the history array
-    historyA0[historyIndex] = newTempA0;
+  // Check for outliers using a simpler method and ignore them if found
+  if (abs(newTempA0 - avgA0) <= (0.2 * avgA0)) {
+    historyA0[historyIndexA0] = newTempA0;
+    historyIndexA0 = (historyIndexA0 + 1) % HISTORY_SIZE;
+  }
+  if (abs(newTempA1 - avgA1) <= (0.2 * avgA1)) {
+    historyA1[historyIndexA1] = newTempA1;
+    historyIndexA1 = (historyIndexA1 + 1) % HISTORY_SIZE;
   }
 
-  if (abs(newTempA1 - avgA1) > (2.0 * stdDevA1)) {
-    // Outlier detected for sensor A1, ignore this reading and keep the last valid value in the history array
-    historyA1[historyIndex] = historyA1[(historyIndex - 1 + HISTORY_SIZE) % HISTORY_SIZE];
-  } else {
-    // Valid reading, update the history array
-    historyA1[historyIndex] = newTempA1;
-  }
-
-  // Update history index
-  historyIndex = (historyIndex + 1) % HISTORY_SIZE;
-
-  // Compute the final temperature using exponential moving average for smoothing
-  float finalTemp = (exponentialMovingAverage(historyA0, HISTORY_SIZE) + exponentialMovingAverage(historyA1, HISTORY_SIZE)) / 2.0;
+  // Compute the final temperature with simple smoothing
+  float finalTemp = (average(historyA0, HISTORY_SIZE) + average(historyA1, HISTORY_SIZE)) / 2.0;
+  static float previousTemp = finalTemp;
+  finalTemp = 0.8 * previousTemp + 0.2 * finalTemp;
+  previousTemp = finalTemp;
 
   return finalTemp;
 }
@@ -195,6 +188,20 @@ float exponentialMovingAverage(float arr[], int size) {
   }
 
   return ema;
+}
+
+float calculateIQR(float arr[], int size) {
+  float Q1, Q3;
+  // Assuming arr is sorted
+  if(size % 2 == 0) {
+    Q1 = (arr[size / 4] + arr[size / 4 - 1]) / 2.0;
+    Q3 = (arr[3 * size / 4] + arr[3 * size / 4 - 1]) / 2.0;
+  } else {
+    Q1 = arr[size / 4];
+    Q3 = arr[3 * size / 4];
+  }
+  
+  return Q3 - Q1;
 }
 
 float readRawTemperature(int pin) {
@@ -344,6 +351,7 @@ void loop() {
     Input = temperature;  // Update Input with the current temperature
 
     if (tuning) {
+      tuning = true;
       int val = aTune.Runtime();
       Serial.println(Input);  // Send the current temperature to the Serial Plotter
 
@@ -360,8 +368,6 @@ void loop() {
       }
 
       if (val != 0) {
-        tuning = false;
-        
         // Display the new PID values in the Serial Monitor
         Serial.print("Tuning complete! Kp: ");
         Serial.print(aTune.GetKp());
@@ -405,7 +411,7 @@ void loop() {
               current_state = PREHEAT;
               state_start_time = millis(); // Start the timer when the target temperature is reached
             }
-            Serial.print("Preheat Warmup\n");
+            Serial.print("Preheat Warmup");
             calculatePID(temperature);
             break;
 
@@ -424,7 +430,7 @@ void loop() {
               current_state = SOAK;
               state_start_time = millis();
             }
-            Serial.print("Soak Warmup\n");
+            Serial.print("Soak Warmup");
             calculatePID(temperature);
             break;
 
@@ -443,7 +449,7 @@ void loop() {
               current_state = REFLOW;
               state_start_time = millis();
             }
-            Serial.print("Reflow Warmup\n");
+            Serial.print("Reflow Warmup");
             calculatePID(temperature);
             break;
 
@@ -459,13 +465,14 @@ void loop() {
 
           case COOLDOWN:
             if (elapsed_time >= cooldown_time * 1000) {
-              temp_setpoint = cooldown_setpoint;
-              state_start_time = 0;
-              running_mode = 10;
-              selected_mode = 0;
-              state_start_time = 0;
+              temp_setpoint = cooldown_setpoint; 
+              state_start_time = 0; 
+              running_mode = 10; 
+              selected_mode = 0; 
+              state_start_time = 0; 
+              idleState = true;
             }
-            Serial.print("Cooldown Phase\n");
+            Serial.print("Cooldown Phase");
             analogWrite(SSR, 255);
             break;
         }
