@@ -40,7 +40,7 @@ int but_4 = 9;
 int SSR = 4;
 int buzzer = 6;
 int Thermistor1_PIN = A0;
-int Thermistor2_PIN = A1;  // Changed from A0 to A1
+int Thermistor2_PIN = A1;
 
 // Buttons debouncing
 bool lastBut_3State = HIGH;
@@ -71,6 +71,8 @@ float historyA1[HISTORY_SIZE];
 int historyIndex = 0;
 bool firstRun = true;
 bool idleState = true;
+int historyIndexA0 = 0;
+int historyIndexA1 = 0;
 
 // ================== USER CONFIGURABLE SETTINGS ==================
 // Screen Refresh Settings
@@ -139,9 +141,6 @@ void setup() {
 
   analogReference(EXTERNAL);
 }
-
-int historyIndexA0 = 0;
-int historyIndexA1 = 0;
 
 float readTemperature() {
   // Read from both sensors
@@ -352,6 +351,7 @@ void loop() {
     Input = temperature;  // Update Input with the current temperature
 
     if (tuning) {
+      tuning = true;
       int val = aTune.Runtime();
       Serial.println(Input);  // Send the current temperature to the Serial Plotter
 
@@ -368,8 +368,6 @@ void loop() {
       }
 
       if (val != 0) {
-        tuning = false;
-        
         // Display the new PID values in the Serial Monitor
         Serial.print("Tuning complete! Kp: ");
         Serial.print(aTune.GetKp());
@@ -413,7 +411,7 @@ void loop() {
               current_state = PREHEAT;
               state_start_time = millis(); // Start the timer when the target temperature is reached
             }
-            Serial.print("Preheat Warmup\n");
+            Serial.print("Preheat Warmup");
             calculatePID(temperature);
             break;
 
@@ -432,7 +430,7 @@ void loop() {
               current_state = SOAK;
               state_start_time = millis();
             }
-            Serial.print("Soak Warmup\n");
+            Serial.print("Soak Warmup");
             calculatePID(temperature);
             break;
 
@@ -451,7 +449,7 @@ void loop() {
               current_state = REFLOW;
               state_start_time = millis();
             }
-            Serial.print("Reflow Warmup\n");
+            Serial.print("Reflow Warmup");
             calculatePID(temperature);
             break;
 
@@ -472,8 +470,9 @@ void loop() {
               running_mode = 10; 
               selected_mode = 0; 
               state_start_time = 0; 
+              idleState = true;
             }
-            Serial.print("Cooldown Phase\n");
+            Serial.print("Cooldown Phase");
             analogWrite(SSR, 255);
             break;
         }
