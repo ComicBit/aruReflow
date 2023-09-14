@@ -24,7 +24,7 @@ float prev_seconds = -1;
 
 // PID Settings
 double outputStart = 0;
-double outputStep = 180;
+double outputStep = 510;
 float outputSpan = 255;
 double inputSpan = 300;
 uint32_t settleTimeSec = 10;
@@ -72,7 +72,7 @@ bool idleState = true;
 
 int historyIndexA0 = 0;
 int historyIndexA1 = 0;
-double tempLimit = 240;
+double tempLimit = 200;
 bool tuning = false; 
 bool firstRun = true;
 float historyA0[HISTORY_SIZE];
@@ -292,6 +292,15 @@ void runController(){
             setpoint = Setpoint, output = outputStep, kp = Kp, ki = Ki, kd = Kd; 
             Output = outputStep;
             myPID.SetMode(AUTOMATIC);
+
+            // Print new PID values
+            Serial.print("New PID Values:");
+            Serial.print(" Kp:") ;
+            Serial.print(Kp);
+            Serial.print(" Ki:");
+            Serial.print(Ki);
+            Serial.print(" Kd:");
+            Serial.println(Kd);
             break;
 
         case tuner.runPid:
@@ -322,6 +331,15 @@ void calculatePID(){
             setpoint = Setpoint, output = outputStep, kp = Kp, ki = Ki, kd = Kd; 
             Output = outputStep;
             myPID.SetMode(AUTOMATIC);
+
+            // Print new PID values
+            Serial.print("New PID Values:");
+            Serial.print(" Kp:") ;
+            Serial.print(Kp);
+            Serial.print(" Ki:");
+            Serial.print(Ki);
+            Serial.print(" Kd:");
+            Serial.println(Kd);
             break;
 
         case tuner.runPid:
@@ -337,6 +355,10 @@ void calculatePID(){
 }
 
 void loop() {
+
+  if (temperature >= tempLimit) {
+      temp_setpoint = 0;
+  }
 
   static float last_temp_setpoint = -1;
 
