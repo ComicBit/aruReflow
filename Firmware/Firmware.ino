@@ -311,8 +311,8 @@ void runController(){
     }
 
     // PWM value inversion since the SSR is ON with LOW
-    //pwm_value = outputSpan - Output;
-    //analogWrite(SSR, pwm_value);     
+    pwm_value = outputSpan - Output;
+    analogWrite(SSR, pwm_value);     
 }
 
 void calculatePID(){
