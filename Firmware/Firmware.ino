@@ -1,7 +1,7 @@
-#include <Wire.h>  // Included by Arduino IDE
-#include <LiquidCrystal_I2C.h>  // Download it here: http://electronoobs.com/eng_arduino_liq_crystal.php
-#include <PID_v1.h>
-#include <PID_AutoTune_v0.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <PID_v2.h>
+#include <sTune.h> 
 
 // Constants for the new temperature reading method
 #define HISTORY_SIZE 5
@@ -13,26 +13,28 @@
 // LCD Initialization
 LiquidCrystal_I2C lcd(0x27, 16, 2);  // Define LCD address as 0x27. Also try 0x3f if it doesn't work.
 
+// LCD magic numbers
+char line1[16], line2[16];
+float prev_temperature = -1;
+float prev_temp_setpoint = -1;
+float prev_pwm_value = -1;
+int prev_running_mode = -1;
+int prev_selected_mode = -1;
+float prev_seconds = -1;
+
 // PID Settings
-float Kp = 2;        // Proportional gain. Adjust based on your system's response.
-float Ki = 0.0025;   // Integral gain. Adjust based on your system's response.
-float Kd = 9;        // Derivative gain. Adjust based on your system's response.
-float MAX_PID_VALUE = 180;  // Max PID output value. Adjust based on your system's capabilities.
+double outputStart = 0;
+double outputStep = 180;
+float outputSpan = 255;
+double inputSpan = 300;
+uint32_t settleTimeSec = 10;
+uint32_t testTimeSec = 100;
+const uint16_t samples = 500;
+uint8_t debounce = 1;
 
-// PID Initialization
-double Setpoint, Input, Output;
-PID myPID(&Input, &Output, &Setpoint, Kp, Ki, Kd, DIRECT);
-PID_ATune aTune(&Input, &Output);
-bool tuning = false;
-
-// PID Variables
-float PID_Output = 0;
-float PID_P, PID_I, PID_D;
-float PID_ERROR, PREV_ERROR;
-int setTemperature = 150;
-int desiredCycles = 5;
-int cycleCounter = 0; 
-float temp_setpoint = 0;
+// PID INPUT and OUTPUT
+double input, output, setpoint = 50, kp, ki, kd; // PID_v2
+float Input, Output, Setpoint = 50, Kp, Ki, Kd; // sTune
 
 // Inputs and Outputs
 int but_3 = 10; 
@@ -66,13 +68,18 @@ unsigned long lastPrintTime = 0;
 
 // Temperature Reading Method Variables
 float T0 = 25 + 273.15;
-float historyA0[HISTORY_SIZE];
-float historyA1[HISTORY_SIZE];
-int historyIndex = 0;
-bool firstRun = true;
 bool idleState = true;
+
 int historyIndexA0 = 0;
 int historyIndexA1 = 0;
+double tempLimit = 240;
+bool tuning = false; 
+bool firstRun = true;
+float historyA0[HISTORY_SIZE];
+float historyA1[HISTORY_SIZE];
+
+sTune tuner = sTune(&Input, &Output, tuner.ZN_PID, tuner.directIP, tuner.printOFF);
+PID myPID(&input, &output, &setpoint, kp, ki, kd, P_ON_M, DIRECT);
 
 // ================== USER CONFIGURABLE SETTINGS ==================
 // Screen Refresh Settings
@@ -107,6 +114,8 @@ enum ReflowState {
   COOLDOWN
 };
 
+float temp_setpoint = 50;
+
 ReflowState current_state = IDLE;
 unsigned long state_start_time = 0;
 
@@ -129,15 +138,10 @@ void setup() {
   millis_now = millis();
   T0 = 25 + 273.15;  // Initialize T0 for the new temperature reading method
 
-  ///////////////////////PID///////////////////////////
-  Setpoint = 150;  // PID Calibration temperature
-  aTune.SetOutputStep(50);
-  aTune.SetControlType(1);
-  aTune.SetNoiseBand(1);
-  aTune.SetLookbackSec(30);
   digitalWrite(SSR, HIGH);  // Make sure SSR is OFF
-  myPID.SetOutputLimits(MIN_PID_VALUE, MAX_PID_VALUE); // Set output limits for PID
-  /////////////////////////////////////////////////////////
+
+  tuner.Configure(inputSpan, outputSpan, outputStart, outputStep, testTimeSec, settleTimeSec, samples);
+  tuner.SetEmergencyStop(tempLimit);
 
   analogReference(EXTERNAL);
 }
@@ -197,14 +201,6 @@ float average(float arr[], int size) {
   }
   return sum / size;
 }
-
-char line1[16], line2[16];
-float prev_temperature = -1;
-float prev_temp_setpoint = -1;
-float prev_pwm_value = -1;
-int prev_running_mode = -1;
-int prev_selected_mode = -1;
-float prev_seconds = -1;
 
 void updateDisplay(float temperature, float temp_setpoint, float pwm_value, int running_mode, int selected_mode, float seconds, const char* transition_phase = nullptr) {
   
@@ -280,28 +276,64 @@ void printSelectedMode(int selected_mode) {
   }
 }
 
-void calculatePID(float temperature) {
-  //Calculate PID
-  PID_ERROR = temp_setpoint - temperature;
-  PID_P = Kp*PID_ERROR;
-  PID_I = PID_I+(Ki*PID_ERROR);      
-  PID_D = Kd * (PID_ERROR-PREV_ERROR);
-  PID_Output = PID_P + PID_I + PID_D;
-  
-  //Define maximum PID values
-  if(PID_Output > MAX_PID_VALUE){
-    PID_Output = MAX_PID_VALUE;
-  }
-  else if (PID_Output < MIN_PID_VALUE){
-    PID_Output = MIN_PID_VALUE;
-  }
-  
-  //Since the SSR is ON with LOW, we invert the pwm signal
-  pwm_value = 255 - PID_Output;
-  
-  analogWrite(SSR, pwm_value);           //We change the Duty Cycle applied to the SSR
-  
-  PREV_ERROR = PID_ERROR;
+void runController(){
+    float optimumOutput = tuner.softPwm(SSR, Input, Output, Setpoint, outputSpan, debounce);
+    
+    switch (tuner.Run()) {
+        case tuner.sample:
+            Input = readTemperature();
+            tuner.plotter(Input, Output, Setpoint, 0.5f, 1); 
+            break;
+
+        case tuner.tunings:
+            tuner.GetAutoTunings(&Kp, &Ki, &Kd); 
+            myPID.SetOutputLimits(0, outputSpan);
+            debounce = 0;
+            setpoint = Setpoint, output = outputStep, kp = Kp, ki = Ki, kd = Kd; 
+            Output = outputStep;
+            myPID.SetMode(AUTOMATIC);
+            break;
+
+        case tuner.runPid:
+            Input = readTemperature();
+            myPID.Compute();
+            tuner.plotter(Input, optimumOutput, Setpoint, 0.5f, 3);
+            break;
+    }
+
+    // PWM value inversion since the SSR is ON with LOW
+    //pwm_value = outputSpan - Output;
+    //analogWrite(SSR, pwm_value);     
+}
+
+void calculatePID(){
+    float optimumOutput = tuner.softPwm(SSR, Input, Output, Setpoint, outputSpan, debounce);
+    
+    switch (tuner.Run()) {
+        case tuner.sample:
+            Input = readTemperature();
+            tuner.plotter(Input, Output, temp_setpoint, 0.5f, 1); 
+            break;
+
+        case tuner.tunings:
+            tuner.GetAutoTunings(&Kp, &Ki, &Kd); 
+            myPID.SetOutputLimits(0, outputSpan);
+            debounce = 0;
+            setpoint = Setpoint, output = outputStep, kp = Kp, ki = Ki, kd = Kd; 
+            Output = outputStep;
+            myPID.SetMode(AUTOMATIC);
+            break;
+
+        case tuner.runPid:
+            Input = readTemperature();
+            myPID.Compute();
+            tuner.plotter(Input, optimumOutput, Setpoint, 0.5f, 3);
+            break;
+    }
+
+    // PWM value inversion since the SSR is ON with LOW
+    //pwm_value = outputSpan - Output;
+    //analogWrite(SSR, pwm_value);     
 }
 
 void loop() {
@@ -316,49 +348,6 @@ void loop() {
     
     temperature = readTemperature();
     Input = temperature;  // Update Input with the current temperature
-
-    if (tuning) {
-      temperature = setTemperature; // Set the Setpoint to setTemperature before starting the tuning
-      int val = aTune.Runtime();
-      Serial.println(Input);  // Send the current temperature to the Serial Plotter
-
-      if (millis() - lastPrintTime >= 5000) {  // Check if 5 seconds have passed
-        // Print the intermediate values of Kp, Ki, and Kd
-        Serial.print("Current Kp: ");
-        Serial.print(aTune.GetKp());
-        Serial.print(" Ki: ");
-        Serial.print(aTune.GetKi());
-        Serial.print(" Kd: ");
-        Serial.println(aTune.GetKd());
-
-        lastPrintTime = millis();  // Update the last print time
-      }
-
-      if (val != 0) {
-        // Display the new PID values in the Serial Monitor
-        Serial.print("Tuning complete! Kp: ");
-        Serial.print(aTune.GetKp());
-        Serial.print(" Ki: ");
-        Serial.print(aTune.GetKi());
-        Serial.print(" Kd: ");
-        Serial.println(aTune.GetKd());
-        
-        // Update PID parameters and switch back to AUTOMATIC mode
-        myPID.SetTunings(aTune.GetKp(), aTune.GetKi(), aTune.GetKd());
-        myPID.SetMode(AUTOMATIC);
-      }
-    } else if (!idleState) {
-      myPID.Compute();
-      analogWrite(SSR, Output);
-
-      if (temperature >= setTemperature) {
-        cycleCounter++;
-        
-        if (cycleCounter >= desiredCycles) {
-          running_mode = 0;
-        }
-      }
-    }
 
     if (running_mode == 1) {
       myPID.SetMode(AUTOMATIC);
@@ -379,7 +368,7 @@ void loop() {
               state_start_time = millis(); // Start the timer when the target temperature is reached
             }
             Serial.print("Preheat Warmup");
-            calculatePID(temperature);
+            calculatePID();
             break;
 
           case PREHEAT:
@@ -389,7 +378,7 @@ void loop() {
               state_start_time = 0;
             }
             Serial.print("Preheat Phase - Waiting ");Serial.print(preheat_time);Serial.print(" sec\n");
-            calculatePID(temperature);
+            calculatePID();
             break;
 
           case SOAK_WARMUP:
@@ -398,7 +387,7 @@ void loop() {
               state_start_time = millis();
             }
             Serial.print("Soak Warmup");
-            calculatePID(temperature);
+            calculatePID();
             break;
 
           case SOAK:
@@ -408,7 +397,7 @@ void loop() {
               state_start_time = 0;
             }
             Serial.print("Soak Phase - Waiting ");Serial.print(soak_time);Serial.print(" sec\n");
-            calculatePID(temperature);
+            calculatePID();
             break;
 
           case REFLOW_WARMUP:
@@ -417,7 +406,7 @@ void loop() {
               state_start_time = millis();
             }
             Serial.print("Reflow Warmup");
-            calculatePID(temperature);
+            calculatePID();
             break;
 
           case REFLOW:
@@ -427,7 +416,7 @@ void loop() {
               state_start_time = 0;
             }
             Serial.print("Reflow Phase - Waiting ");Serial.print(reflow_time);Serial.print(" sec\n");
-            calculatePID(temperature);
+            calculatePID();
             break;
 
           case COOLDOWN:
@@ -444,6 +433,9 @@ void loop() {
             break;
         }
 
+    } else if (running_mode == 2) {
+      myPID.SetMode(AUTOMATIC);
+      runController();
     } else {
       current_state = IDLE;
       temp_setpoint = 0;
