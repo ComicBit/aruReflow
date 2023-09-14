@@ -17,9 +17,9 @@ uint32_t settleTimeSec = 10;
 uint32_t testTimeSec = 100;  // runPid interval = testTimeSec / samples
 const uint16_t samples = 500;
 const float inputSpan = 200;
-const float outputSpan = 1000;
+const float outputSpan = 255;
 float outputStart = 0;
-float outputStep = 50;
+float outputStep = 510;
 float tempLimit = 150;
 uint8_t debounce = 1;
 
@@ -78,7 +78,6 @@ void loop() {
 
     case tuner.runPid: // active once per sample after tunings
       Input = readTemperature();
-      Serial.print("Current Temperature: "); Serial.println(Input);
       input = Input;
       myPID.Compute();
       Output = output;
