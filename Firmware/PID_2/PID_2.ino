@@ -1,185 +1,100 @@
-#include <PID_v1.h>
-#include <PID_AutoTune_v0.h>
+/****************************************************************************
+  sTune PID_v1 Example (MAX31856, PTC Heater / SSR / Software PWM)
+  This sketch does on-the-fly tuning and PID control. Tuning parameters are
+  quickly determined and applied during temperature ramp-up to setpoint.
+  View results using serial plotter.
+  Reference: https://github.com/Dlloydev/sTune/wiki/Examples_MAX31856_PTC_SSR
+  ****************************************************************************/
+#include <sTune.h>
+#include <PID_v2.h>
 
-byte ATuneModeRemember=2;
-double input=80, output=50, setpoint=90;
-double kp=4,ki=0,kd=0;
-
-double kpmodel=1.5, taup=100, theta[50];
-double outputStart=5;
-double aTuneStep=50, aTuneNoise=1, aTuneStartValue=100;
-unsigned int aTuneLookBack=20;
-
-boolean tuning = false;
-unsigned long  modelTime, serialTime;
-
-int raw = analogRead(A0); // Assuming the thermistor is connected to pin A0
-
-PID myPID(&input, &output, &setpoint,kp,ki,kd, DIRECT);
-PID_ATune aTune(&input, &output);
-
-// Constants for the new temperature reading method
-#define HISTORY_SIZE 5
-#define RT0 100000   // Ω
-#define B 3950       // K
-#define VCC 3.3        // Supply voltage
-#define R 100000     // R=100KΩ
-#define T0 298.15     // Kelvin equivalent of 25 degrees Celsius
-
+int relayPin = 4;
 int Thermistor1_PIN = A0;
 int Thermistor2_PIN = A1;
 
+// user settings
+uint32_t settleTimeSec = 10;
+uint32_t testTimeSec = 100;  // runPid interval = testTimeSec / samples
+const uint16_t samples = 500;
+const float inputSpan = 200;
+const float outputSpan = 1000;
+float outputStart = 0;
+float outputStep = 50;
+float tempLimit = 150;
+uint8_t debounce = 1;
+
+// variables
+double input, output, setpoint = 50, kp, ki, kd; // PID_v1 
+float Input, Output, Setpoint = 50, Kp, Ki, Kd; // sTune
+const long controlInterval = 500; // half second
+unsigned long onTime = 0;
+
+
+// temperature reading
+#define RT0 100000   // Ω
+#define B 3950       // K
+#define VCC 3.3      // Supply voltage
+#define R 100000     // R=100KΩ
 bool firstRun = true;
+const int HISTORY_SIZE = 2; // or any other size you prefer
 float historyA0[HISTORY_SIZE];
 float historyA1[HISTORY_SIZE];
-
 int historyIndexA0 = 0;
 int historyIndexA1 = 0;
 
-//set to false to connect to the real world
-boolean useSimulation = false;
+sTune tuner = sTune(&Input, &Output, tuner.ZN_PID, tuner.reverseIP, tuner.printOFF);
+PID myPID(&input, &output, &setpoint, kp, ki, kd, P_ON_M, REVERSE);
 
-const long controlInterval = 500; // half second
-unsigned long onTime = map(output, 0, 255, 0, controlInterval);
-
-
-void setup()
-{
-  //Setup the pid 
-  myPID.SetMode(AUTOMATIC);
-
-  if(tuning)
-  {
-    tuning=false;
-    changeAutoTune();
-    tuning=true;
-  }
-  
-  serialTime = 0;
+void setup() {
+  pinMode(relayPin, OUTPUT);
+  pinMode(Thermistor1_PIN, INPUT);
+  pinMode(Thermistor2_PIN, INPUT);
   Serial.begin(9600);
-  pinMode(4, OUTPUT);
+  delay(3000);
+  tuner.Configure(inputSpan, outputSpan, outputStart, outputStep, testTimeSec, settleTimeSec, samples);
+  tuner.SetEmergencyStop(tempLimit);
 }
 
-void loop()
-{
-  int raw = analogRead(A0);
-  float resistance = (VCC * R) / ((VCC * raw) / 1023.0) - R;
-  float temperatureK = 1 / ((log(resistance / RT0) / B) + (1 / 298.15)); // 298.15 is room temperature in Kelvin
-  float temperatureC = temperatureK - 273.15;
+void loop() {
+  float optimumOutput = tuner.softPwm(relayPin, Input, Output, Setpoint, outputSpan, debounce);
 
-  unsigned long now = millis();
+  switch (tuner.Run()) {
+    case tuner.sample: // active once per sample during test
+      Input = readTemperature();
+      tuner.plotter(Input, Output, Setpoint, 0.5f, 1); // output scale 0.5, plot every 3rd sample
+      break;
 
-  input = readTemperature();
-  
-  if(tuning)
-  { 
-    Serial.print("In the for tuning. 1");
-    byte val = (aTune.Runtime());
-    if (val!=0)
-    {
-      Serial.print("Val different from 0. 2");
-      tuning = false;
-    }
-    if(!tuning)
-    {
-      Serial.print("Not tuning. 3");
-      //we're done, set the tuning parameters
-      kp = aTune.GetKp();
-      ki = aTune.GetKi();
-      kd = aTune.GetKd();
-      myPID.SetTunings(kp,ki,kd);
-      AutoTuneHelper(false);
-      
-      // Print the new values immediately
-      Serial.print("New kp: "); Serial.print(kp); Serial.print(" ");
-      Serial.print("New ki: "); Serial.print(ki); Serial.print(" ");
-      Serial.print("New kd: "); Serial.println(kd);
-    }
-  }
-  else myPID.Compute();
-  controlSSR();
-  
-  //send-receive with processing if it's time
-  if(millis()>serialTime)
-  {
-    SerialReceive();
-    SerialSend();
-    SerialSendPlotter();
-    serialTime+=500;
-  }
-}
+    case tuner.tunings: // active just once when sTune is done
+      tuner.GetAutoTunings(&Kp, &Ki, &Kd); // sketch variables updated by sTune
+      myPID.SetOutputLimits(0, outputSpan * 0.1);
+      myPID.SetSampleTime(outputSpan - 1);
+      debounce = 0; // ssr mode
+      setpoint = Setpoint, output = outputStep, kp = Kp, ki = Ki, kd = Kd;
+      Output = outputStep;
+      myPID.SetMode(AUTOMATIC); // the PID is turned on
+      myPID.SetTunings(kp, ki, kd); // update PID with the new tunings
+      Serial.println("Tuning completed. Applying new tunings...");
+      Serial.println("Kp: "); Serial.println(Kp);
+      Serial.println("\nKi: "); Serial.println(Ki);
+      Serial.println("\nKd: "); Serial.println(Kd);
+      break;
 
-void changeAutoTune()
-{
- if(!tuning)
-  { 
-    Serial.print("Change autotune not tuning. 4");
-    //Set the output to the desired starting frequency.
-    output=aTuneStartValue;
-    aTune.SetNoiseBand(aTuneNoise);
-    aTune.SetOutputStep(aTuneStep);
-    aTune.SetLookbackSec((int)aTuneLookBack);
-    AutoTuneHelper(true);
-    tuning = true;
-  }
-  else
-  { //cancel autotune
-    Serial.print("Autotune cancelled. 5");
-    aTune.Cancel();
-    tuning = false;
-    AutoTuneHelper(false);
-  }
-}
-
-void AutoTuneHelper(boolean start)
-{
-  if(start) {
-    Serial.print("Autotune helper start. 6");
-    ATuneModeRemember = myPID.GetMode();
-    }
-  else {}
-    Serial.print("Else utotune helper start. 7");
-    myPID.SetMode(ATuneModeRemember);
-  }
-}
-
-
-void SerialSend()
-{
-  Serial.print("setpoint: ");Serial.print(setpoint); Serial.print(" ");
-  Serial.print("input: ");Serial.print(input); Serial.print(" ");
-  Serial.print("output: ");Serial.print(output); Serial.print(" ");
-  if(tuning){
-    Serial.println("tuning mode");
-  } else {
-    Serial.print("kp: ");Serial.print(myPID.GetKp());Serial.print(" ");
-    Serial.print("ki: ");Serial.print(myPID.GetKi());Serial.print(" ");
-    Serial.print("kd: ");Serial.print(myPID.GetKd());Serial.println();
-  }
-}
-
-void SerialSendPlotter() {
-  Serial.print(input, 2);  // Temperature value with 2 decimal places
-  Serial.print(", ");
-  Serial.println(setpoint, 2);  // Setpoint value with 2 decimal places
-}
-
-void SerialReceive()
-{
-  if(Serial.available())
-  {
-   char b = Serial.read(); 
-   Serial.flush(); 
-   if((b=='1' && !tuning) || (b!='1' && tuning))changeAutoTune();
+    case tuner.runPid: // active once per sample after tunings
+      Input = readTemperature();
+      Serial.print("Current Temperature: "); Serial.println(Input);
+      input = Input;
+      myPID.Compute();
+      output = output; // Ensure the 'output' variable is updated with PID compute results
+      controlSSR(); // Call the controlSSR function to manage the SSR
+      tuner.plotter(Input, output, Setpoint, 0.5f, 3);
+      break;
   }
 }
 
 float readTemperature() {
-  // Read from both sensors
   float newTempA0 = readRawTemperature(Thermistor1_PIN);
   float newTempA1 = readRawTemperature(Thermistor2_PIN);
 
-  // Initialize history with first reading
   if (firstRun) {
     for (int i = 0; i < HISTORY_SIZE; i++) {
       historyA0[i] = newTempA0;
@@ -188,11 +103,9 @@ float readTemperature() {
     firstRun = false;
   }
 
-  // Calculate average
   float avgA0 = average(historyA0, HISTORY_SIZE);
   float avgA1 = average(historyA1, HISTORY_SIZE);
 
-  // Check for outliers using a simpler method and ignore them if found
   if (abs(newTempA0 - avgA0) <= (0.2 * avgA0)) {
     historyA0[historyIndexA0] = newTempA0;
     historyIndexA0 = (historyIndexA0 + 1) % HISTORY_SIZE;
@@ -202,10 +115,9 @@ float readTemperature() {
     historyIndexA1 = (historyIndexA1 + 1) % HISTORY_SIZE;
   }
 
-  // Compute the final temperature with simple smoothing
   float finalTemp = (average(historyA0, HISTORY_SIZE) + average(historyA1, HISTORY_SIZE)) / 2.0;
   static float previousTemp = finalTemp;
-  finalTemp = 0.8 * previousTemp + 0.2 * finalTemp;
+  finalTemp = 0.2 * previousTemp + 0.8 * finalTemp; // changed the weights here
   previousTemp = finalTemp;
 
   return finalTemp;
@@ -216,7 +128,7 @@ float readRawTemperature(int pin) {
   float RT = (voltage * R) / (VCC - voltage); 
 
   float ln = log(RT / RT0);
-  float TX = (1 / ((ln / B) + (1 / T0))); 
+  float TX = (1 / ((ln / B) + (1 / (25 + 273.15)))); 
   TX = TX - 273.15; // Convert Kelvin to Celsius
 
   return TX;
@@ -230,19 +142,39 @@ float average(float arr[], int size) {
   return sum / size;
 }
 
+double integral = 0;
+double previousError = 0;
+
 void controlSSR() {
   static unsigned long previousMillis = 0;
   unsigned long currentMillis = millis();
   
-  onTime = map(output, 0, 255, 0, controlInterval);
+  double error = setpoint - input; // Calculate the current error
+
+  integral += error * (currentMillis - previousMillis); // Calculate the integral of the error
+  double derivative = (error - previousError) / (currentMillis - previousMillis); // Calculate the derivative of the error
+
+  double dutyCycle = kp * error + ki * integral + kd * derivative; // Calculate the new duty cycle based on the PID control loop
+  
+  dutyCycle = constrain(dutyCycle, 0, 100); // Constrain the duty cycle to between 0 and 100%
+
+  onTime = (dutyCycle / 100) * controlInterval; // Calculate the on time based on the duty cycle
+
+  Serial.print("Error: "); Serial.println(error);
+  Serial.print("Integral: "); Serial.println(integral);
+  Serial.print("Derivative: "); Serial.println(derivative);
+  Serial.print("Duty Cycle: "); Serial.println(dutyCycle);
 
   if (currentMillis - previousMillis >= controlInterval) {
     previousMillis = currentMillis;
+    previousError = error;
   }
   else if (currentMillis - previousMillis < onTime) {
     digitalWrite(4, LOW); // Turn on the SSR
+    Serial.println("SSR State: ON");
   }
   else {
     digitalWrite(4, HIGH); // Turn off the SSR
+    Serial.println("SSR State: OFF");
   }
 }
